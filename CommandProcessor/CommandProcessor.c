@@ -115,12 +115,6 @@ int8_t ProcessSetDisplayFormat(uint32_t Format)
 void ComProc_ProcessCommand(void)
 {
     int8_t Result;
-    uint32_t ulTimerVal32;
-    uint64_t ulTimerVal64;
-    uint64_t time;
-    uint64_t TimerA;
-    uint64_t TimerB;
-    uint64_t TimerBase;
 
     if (CommandCount != 0)
     {
@@ -136,34 +130,6 @@ void ComProc_ProcessCommand(void)
             USBSerial_SendMessage((unsigned char *)"\nTIVA in DFU mode\n");
             USBSerial_SendMessage((unsigned char *)"\nUse LM Flash to download new code\n");
             TIVA_DFU();
-        }
-        else if (CommandMatch(CommandBuffer, "C"))
-        {
-            MAP_TimerLoadSet64(IR_TIMER_BASE, 0x0);
-            SysCtlDelay(3);
-            USBSerial_SendMessage((unsigned char *)"Cleared\n");
-        }
-        else if (CommandMatch(CommandBuffer, "R"))
-        {
-            MAP_TimerLoadSet64(IR_TIMER_BASE, 0xffffffffffffffff);
-            SysCtlDelay(3);
-            USBSerial_SendMessage((unsigned char *)"Reset\n");
-        }
-        else if (CommandMatch(CommandBuffer, "T"))
-        {
-            while(CommandCount == 0)
-            {
-//                ulTimerVal32 = TimerValueGet(IR_TIMER_BASE, IR_TIMER);  //Read timer value (This returns the upper 32 bits)
-//                ulTimerVal64 = TimerValueGet64(IR_TIMER_BASE);  //Read timer value
-//                time = (ulTimerVal64 / 80000000);
-//                sprintf((char*)MiscBuffer, "Timer = %20lu %20llu %10llu\n", ulTimerVal32, ulTimerVal64, time);
-                TimerA = TimerValueGet(IR_TIMER_BASE, TIMER_A);
-                TimerB = TimerValueGet(IR_TIMER_BASE, TIMER_B);
-                TimerBase = TimerValueGet64(IR_TIMER_BASE);
-                sprintf((char*)MiscBuffer, "A = %15llu B = %15llu Both = %15llu\n", TimerA, TimerB, TimerBase);
-                USBSerial_SendMessage((unsigned char *)MiscBuffer);
-                WaitFormS(50);
-            }
         }
         else if (CommandMatch(CommandBuffer, "RED"))
         {

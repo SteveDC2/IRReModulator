@@ -1,8 +1,12 @@
-#include "inc/tm4c123gh6pm.h"
-#include "TIVAMonitor.h"
-#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+//#include <ctype.h>
+//#include <stddef.h>
 #include <stdbool.h>
-#include <stdint.h>
+//#include <stdint.h>
+//#include "inc/tm4c123gh6pm.h"
+#include "TIVAMonitor.h"
 #include "inc/hw_ints.h"
 #include "inc/hw_memmap.h"
 #include "inc/hw_types.h"
@@ -32,52 +36,12 @@
 #include "usb_serial_structs.h"
 #include "utils/uartstdio.h"
 #include "driverlib/ssi.h"
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
 #include "USBSerial.h"
 #include "Init.h"
 #include "USBSerial.h"
 #include "EEPROM.h"
 #include "Helpers.h"
 #include "Tiva.h"
-#include "Tiva.h"
-
-void ProcessCounterTrigger()
-{
-    static uint64_t LastTimerValue = 0;
-    uint64_t CurrentTimerValue;
-    uint64_t Delta;
-    char Temp[32];
-
-    CurrentTimerValue = TimerValueGet64(IR_TIMER_BASE);
-    Delta = (CurrentTimerValue - LastTimerValue);
-    LastTimerValue = CurrentTimerValue;
-    sprintf((char*)Temp, "%15llu\n", Delta);
-    USBSerial_SendMessage((unsigned char *)Temp);
-}
-
-void PortFIntHandler()
-{
-    uint32_t status=0;
-
-    status = GPIOIntStatus(GPIO_PORTF_BASE,true);
-    GPIOIntClear(GPIO_PORTF_BASE,status);
-
-    if( (status & GPIO_INT_PIN_4) == GPIO_INT_PIN_4)
-    {
-      //Then there was a pin4 interrupt i.e. the push button
-        ProcessCounterTrigger();
-    }
-
-    if( (status & GPIO_INT_PIN_5) == GPIO_INT_PIN_5)
-    {
-      //Then there was a pin5 interrupt
-      //etc...
-    }
-}
-
 
 //--------------------------------------------------------------------------------------------------
 // ConfigurePins
@@ -105,14 +69,31 @@ void ConfigurePins(void)
 //    MAP_GPIOPinWrite(PWR_EN_VAR1, 0);
     MAP_GPIOPinTypeGPIOOutput(LED_BASE, RED_LED|GREEN_LED|BLUE_LED);
 
-    //Enable the Launchpad push button
-    GPIOPinTypeGPIOInput(GPIO_PORTF_BASE, GPIO_PIN_4);
-    GPIOPadConfigSet(GPIO_PORTF_BASE,GPIO_PIN_4,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);
-    //Enable the interrupts for the GPIO
-    GPIOIntTypeSet(GPIO_PORTF_BASE,GPIO_PIN_4,GPIO_FALLING_EDGE);
-    GPIOIntRegister(GPIO_PORTF_BASE,PortFIntHandler);
-    GPIOIntEnable(GPIO_PORTF_BASE, GPIO_INT_PIN_4);
-    GPIOIntClear(GPIO_PORTF_BASE, GPIO_INT_PIN_4);
+//    //Enable the Launchpad push button
+//    GPIOPinTypeGPIOInput(GPIO_PORTF_BASE, GPIO_PIN_4);
+//    GPIOPadConfigSet(GPIO_PORTF_BASE,GPIO_PIN_4,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);
+//    //Enable the interrupts for the GPIO
+//    GPIOIntTypeSet(GPIO_PORTF_BASE,GPIO_PIN_4,GPIO_FALLING_EDGE);
+//    GPIOIntRegister(GPIO_PORTF_BASE,PortFIntHandler);
+//    GPIOIntEnable(GPIO_PORTF_BASE, GPIO_INT_PIN_4);
+//    GPIOIntClear(GPIO_PORTF_BASE, GPIO_INT_PIN_4);
+
+    //Configure the 4 inputs from the IR receivers
+    GPIOPinTypeGPIOInput(GPIO_PORTA_BASE, GPIO_PIN_7 | GPIO_PIN_6 | GPIO_PIN_5 | GPIO_PIN_4);
+    GPIOPadConfigSet(GPIO_PORTA_BASE,GPIO_PIN_7 | GPIO_PIN_6 | GPIO_PIN_5 | GPIO_PIN_4,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);
+
+    //Configure the 4 de-modulated outupts
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3);
+
+    //    //Enable the interrupts for the pulse feedback GPIOs
+    GPIOIntTypeSet(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3,GPIO_BOTH_EDGES);
+    GPIOIntRegister(GPIO_PORTD_BASE,PortDIntHandler);
+    GPIOIntEnable(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3);
+    GPIOIntClear(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3);
+
+
+    //Configure ISR usage monitor pin
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -174,37 +155,91 @@ void Init_ReadEEPROMDefaults()
     }
 }
 
-void ConfigureTimer()
+void Timer100KHzISR()
 {
-  /*
-    Set the timer to be periodic.
-  */
+    static uint8_t Sample1 = 0xf;
+    static uint8_t Sample2 = 0xf;
+    static uint8_t Sample3 = 0xf;
+    static uint8_t Sample4 = 0xf;
+    static uint8_t Filtered = 0xf;
 
-//  MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER2);
+    MAP_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, 0xff);
+    MAP_TimerIntClear(INTERVAL_100KHZ_TIMER_BASE, TIMER_TIMA_TIMEOUT);  // Clear the timer interrupt
+
+    Sample4 = Sample3;
+    Sample3 = Sample2;
+    Sample2 = Sample1;
+    Sample1 = GPIOPinRead(GPIO_PORTA_BASE,GPIO_PIN_7 | GPIO_PIN_6 | GPIO_PIN_5 | GPIO_PIN_4) >> 4;
+    Filtered = Sample1 & Sample2 & Sample3 & Sample4;
+
+    MAP_GPIOPinWrite(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3, Filtered);
+
+    MAP_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, 0);
+}
+
+void Configure64bitTimer()
+{
+  MAP_SysCtlPeripheralEnable(COUNTER_64_TIMER_PERIPH);
+  MAP_SysCtlDelay(3);
+
+  MAP_TimerConfigure(COUNTER_64_TIMER_BASE, COUNTER_64_TIMER_CFG);
+  MAP_SysCtlDelay(3);
+
+//  MAP_TimerLoadSet64(COUNTER_64_TIMER_BASE, 0xffffffffffffffff); //Doesn't seem to do anything
 //  MAP_SysCtlDelay(3);
-//  MAP_TimerConfigure(TIMER2_BASE, TIMER_CFG_PERIODIC);
-//  MAP_TimerEnable(TIMER2_BASE,TIMER_A);
 
-  // Enable TIMER1 Peripheral
-  MAP_SysCtlPeripheralEnable(IR_TIMER_PERIPH);
-  MAP_SysCtlDelay(3);
-
-  // Configure the TIMER1A
-  MAP_TimerConfigure(IR_TIMER_BASE, IR_TIMER_CFG);
-  MAP_SysCtlDelay(3);
-
-  MAP_TimerLoadSet64(IR_TIMER_BASE, 0xffffffffffffffff); //Doesn't seem to do anything
-  MAP_SysCtlDelay(3);
-
-//  // Setup the interrupt for the TIMER1A timeout.
-//  MAP_IntEnable(IR_TIMER_INT1);
-//  MAP_TimerIntEnable(IR_TIMER_BASE, IR_TIMER_INT2);
-
-  // Enable the IR_TIMER.
-  MAP_TimerEnable(IR_TIMER_BASE, IR_TIMER);
+  // Enable the timer
+  MAP_TimerEnable(COUNTER_64_TIMER_BASE, COUNTER_64_TIMER);
 
 }
 
+void Configure32bitTimer()
+{
+    /*
+  MAP_SysCtlPeripheralEnable(COUNTER_32_TIMER_PERIPH);
+  MAP_SysCtlDelay(3);
+
+  MAP_TimerConfigure(COUNTER_32_TIMER_BASE, COUNTER_32_TIMER_CFG);
+  MAP_SysCtlDelay(3);
+
+  MAP_TimerPrescaleSet(COUNTER_32_TIMER_BASE, COUNTER_32_TIMER, 63);
+
+//  MAP_TimerLoadSet(COUNTER_32_TIMER_BASE, COUNTER_32_TIMER, 0); //Doesn't seem to do anything
+//  MAP_SysCtlDelay(3);
+
+  // Enable the timer
+  MAP_TimerEnable(COUNTER_32_TIMER_BASE, COUNTER_32_TIMER);
+*/
+
+
+    SysCtlPeripheralEnable(COUNTER_32_TIMER_PERIPH);
+    TimerDisable(COUNTER_32_TIMER_BASE,COUNTER_32_TIMER);
+    TimerConfigure(COUNTER_32_TIMER_BASE, TIMER_CFG_PERIODIC);
+    TimerPrescaleSet(COUNTER_32_TIMER_BASE, TIMER_BOTH, 5);
+    TimerLoadSet(COUNTER_32_TIMER_BASE, COUNTER_32_TIMER, 0x00ffffff);
+    TimerEnable(COUNTER_32_TIMER_BASE, COUNTER_32_TIMER);
+
+}
+
+void Configure100KHzTimer()
+{
+
+    MAP_SysCtlPeripheralEnable(INTERVAL_100KHZ_TIMER_PERIPH);
+    MAP_SysCtlDelay(3);
+    MAP_TimerConfigure(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER_CFG);
+    MAP_SysCtlDelay(3);
+    TimerIntRegister(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER, Timer100KHzISR);
+    MAP_TimerEnable(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER);
+    MAP_TimerIntEnable(INTERVAL_100KHZ_TIMER_BASE, TIMER_TIMA_TIMEOUT);
+    MAP_TimerLoadSet(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER, SysCtlClockGet() / 100000);
+}
+
+void ConfigureTimers()
+{
+    Configure64bitTimer();
+//    Configure32bitTimer();
+    Configure100KHzTimer();
+}
 
 //--------------------------------------------------------------------------------------------------
 // Init_PeripheralInit
@@ -222,9 +257,12 @@ void Init_PeripheralInit(void)
 
     Init_ReadEEPROMDefaults();
 
-    ConfigureTimer();
+    ConfigureTimers();
 
     //Make sure EEPROM read first (Init_ReadEEPROMDefaults) since sets the USB descriptor serial number, otherwise 0 will be used
     USBSerial_ConfigureUSB();
+
+    MAP_IntEnable(INT_TIMER0A);
+    MAP_IntMasterEnable();
 }
 

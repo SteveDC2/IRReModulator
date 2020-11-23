@@ -60,9 +60,6 @@ extern void SysTickIntHandler(void);
 //extern void USBUARTIntHandler(void);
 extern void USB0DeviceIntHandler(void);
 
-extern void Timer1IntHandler(void);
-extern void PA2IntHandler(void);
-
 //*****************************************************************************
 //
 // The vector table.  Note that the proper constructs must be placed on this to
@@ -89,7 +86,7 @@ void(*const g_pfnVectors[])(void) = {
     0,                                      // Reserved
     IntDefaultHandler,                      // The PendSV handler
     SysTickIntHandler,                      // The SysTick handler
-    PA2IntHandler,                      // GPIO Port A
+    IntDefaultHandler,                      // GPIO Port A
     IntDefaultHandler,                      // GPIO Port B
     IntDefaultHandler,                      // GPIO Port C
     IntDefaultHandler,                      // GPIO Port D
@@ -111,7 +108,7 @@ void(*const g_pfnVectors[])(void) = {
     IntDefaultHandler,                      // Watchdog timer
     IntDefaultHandler,                      // Timer 0 subtimer A
     IntDefaultHandler,                      // Timer 0 subtimer B
-    Timer1IntHandler,                      // Timer 1 subtimer A
+    IntDefaultHandler,                      // Timer 1 subtimer A
     IntDefaultHandler,                      // Timer 1 subtimer B
     IntDefaultHandler,                      // Timer 2 subtimer A
     IntDefaultHandler,                      // Timer 2 subtimer B
