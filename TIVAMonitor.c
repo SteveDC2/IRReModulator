@@ -84,7 +84,7 @@ const unsigned char YesMessage[] = "Yes";
 const unsigned char *DisplayYesNoMessagePointer[] = {NoMessage, YesMessage};
 
 uint8_t IRState[4] = {0, 0, 0, 0};
-uint8_t IRLastState[4] = {0, 0, 0, 0};
+uint8_t IRDataPhase[4] = {0, 0, 0, 0};
 uint8_t IRAddress[4] = {0, 0, 0, 0};
 uint8_t IRNotAddress[4] = {0, 0, 0, 0};
 uint8_t IRData[4] = {0, 0, 0, 0};
@@ -145,6 +145,7 @@ inline void UpdateAddress(uint8_t LSB, uint8_t Channel, uint8_t PosNegAddData)
     {
         IRState[Channel]++;
         IRBitCounter[Channel] = 0;
+        IRDataPhase[Channel]++;
     }
     else
     {
@@ -179,7 +180,6 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
     uint64_t Delta;
     uint8_t ErrorFlag;
 
-    IRLastState[Channel] = IRState[Channel];
     ErrorFlag = 0;
 
     if (IRState[Channel] == 0)
@@ -216,6 +216,7 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
         {
             IRLastCounter[Channel] = CurrentTimerValue;
             IRBitCounter[Channel] = 0;
+            IRDataPhase[Channel] = 0;
             IRNewData = IRNewData & (~(1 << Channel));
             IRState[Channel] ++;
         }
@@ -227,9 +228,8 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             ErrorFlag = 2;
         }
     }
-    else if (IRState[Channel] == 3)
+    else if ((IRState[Channel] == 3) || (IRState[Channel] == 4) || (IRState[Channel] == 5) || (IRState[Channel] == 6))
     {
-        //We are now in the positive address code region (or repeat count region but we don't do anything on repeat)
         Delta = CurrentTimerValue - IRLastCounter[Channel];
         if (State != 0)//Bit marker region
         {
@@ -245,132 +245,27 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
             {
                 //Period denotes a 0
-                UpdateAddress(0, Channel, 0);
+                UpdateAddress(0, Channel, IRDataPhase[Channel]);
             }
             else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
             {
                 //Period denotes a 1
-                UpdateAddress(1, Channel, 0);
+                UpdateAddress(1, Channel, IRDataPhase[Channel]);
             }
             else
             {
                 //Bad so go back to idle state
                 IRState[Channel] = 8;
-                ErrorFlag = 4;
+                ErrorFlag = 4 + IRDataPhase[Channel];
             }
-
-        }
-        IRLastCounter[Channel] = CurrentTimerValue;
-    }
-    else if (IRState[Channel] == 4)
-    {
-        //We are now in the negative address code region
-        Delta = CurrentTimerValue - IRLastCounter[Channel];
-        if (State != 0)//Bit marker region
-        {
-            if (!InRange(Delta, BIT_LEADIN_PERIOD_US_LOW, BIT_LEADIN_PERIOD_US_HIGH))
-            {
-                //Bad so go back to idle state
-                IRState[Channel] = 8;
-                ErrorFlag = 5;
-            }
-        }
-        else//Bit data region
-        {
-            if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
-            {
-                //Period denotes a 0
-                UpdateAddress(0, Channel, 1);
-            }
-            else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
-            {
-                //Period denotes a 1
-                UpdateAddress(1, Channel, 1);
-            }
-            else
-            {
-                //Bad so go back to idle state
-                IRState[Channel] = 8;
-                ErrorFlag = 6;
-            }
-
-        }
-        IRLastCounter[Channel] = CurrentTimerValue;
-    }
-    else if (IRState[Channel] == 5)
-    {
-        //We are now in the positive data code region
-        Delta = CurrentTimerValue - IRLastCounter[Channel];
-        if (State != 0)//Bit marker region
-        {
-            if (!InRange(Delta, BIT_LEADIN_PERIOD_US_LOW, BIT_LEADIN_PERIOD_US_HIGH))
-            {
-                //Bad so go back to idle state
-                IRState[Channel] = 8;
-                ErrorFlag = 7;
-            }
-        }
-        else//Bit data region
-        {
-            if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
-            {
-                //Period denotes a 0
-                UpdateAddress(0, Channel, 2);
-            }
-            else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
-            {
-                //Period denotes a 1
-                UpdateAddress(1, Channel, 2);
-            }
-            else
-            {
-                //Bad so go back to idle state
-                IRState[Channel] = 8;
-                ErrorFlag = 8;
-            }
-
-        }
-        IRLastCounter[Channel] = CurrentTimerValue;
-    }
-    else if (IRState[Channel] == 6)
-    {
-        //We are now in the negative data code region
-        Delta = CurrentTimerValue - IRLastCounter[Channel];
-        if (State != 0)//Bit marker region
-        {
-            if (!InRange(Delta, BIT_LEADIN_PERIOD_US_LOW, BIT_LEADIN_PERIOD_US_HIGH))
-            {
-                //Bad so go back to idle state
-                IRState[Channel] = 8;
-                ErrorFlag = 9;
-            }
-        }
-        else//Bit data region
-        {
-            if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
-            {
-                //Period denotes a 0
-                UpdateAddress(0, Channel, 3);
-            }
-            else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
-            {
-                //Period denotes a 1
-                UpdateAddress(1, Channel, 3);
-            }
-            else
-            {
-                //Bad so go back to idle state
-                IRState[Channel] = 8;
-                ErrorFlag = 10;
-            }
-
         }
         IRLastCounter[Channel] = CurrentTimerValue;
     }
     else if (IRState[Channel] == 7)
     {
         if ((IRAddress[Channel] == (IRNotAddress[Channel] ^ 255))
-         && (IRData[Channel] == (IRNotData[Channel] ^ 255)))
+         && (IRData[Channel] == (IRNotData[Channel] ^ 255))
+         && (IRAddress[Channel] == 0))
         {
             IRReceived[Channel] = (IRAddress[Channel] << 8) | IRData[Channel];
             IRNewData = IRNewData | (1 << Channel);
