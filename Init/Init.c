@@ -155,7 +155,7 @@ void Init_ReadEEPROMDefaults()
     }
 }
 
-void Timer100KHzISR()
+void TimerSamplerISR()
 {
     static uint8_t Sample1 = 0xf;
     static uint8_t Sample2 = 0xf;
@@ -164,7 +164,7 @@ void Timer100KHzISR()
     static uint8_t Filtered = 0xf;
 
     MAP_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, 0xff);
-    MAP_TimerIntClear(INTERVAL_100KHZ_TIMER_BASE, TIMER_TIMA_TIMEOUT);  // Clear the timer interrupt
+    MAP_TimerIntClear(INTERVAL_SAMPLING_TIMER_BASE, TIMER_TIMA_TIMEOUT);  // Clear the timer interrupt
 
     Sample4 = Sample3;
     Sample3 = Sample2;
@@ -221,25 +221,26 @@ void Configure32bitTimer()
 
 }
 
-void Configure100KHzTimer()
+void ConfigureSamplerTimer()
 {
 
-    MAP_SysCtlPeripheralEnable(INTERVAL_100KHZ_TIMER_PERIPH);
+    MAP_SysCtlPeripheralEnable(INTERVAL_SAMPLING_TIMER_PERIPH);
     MAP_SysCtlDelay(3);
-    MAP_TimerConfigure(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER_CFG);
+    MAP_TimerConfigure(INTERVAL_SAMPLING_TIMER_BASE, INTERVAL_SAMPLING_TIMER_CFG);
     MAP_SysCtlDelay(3);
-    TimerIntRegister(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER, Timer100KHzISR);
-    MAP_TimerEnable(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER);
-    MAP_TimerIntEnable(INTERVAL_100KHZ_TIMER_BASE, TIMER_TIMA_TIMEOUT);
-//    MAP_TimerLoadSet(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER, SysCtlClockGet() / 100000);
-    MAP_TimerLoadSet(INTERVAL_100KHZ_TIMER_BASE, INTERVAL_100KHZ_TIMER, SysCtlClockGet() / 50000);
+    TimerIntRegister(INTERVAL_SAMPLING_TIMER_BASE, INTERVAL_SAMPLING_TIMER, TimerSamplerISR);
+    MAP_TimerEnable(INTERVAL_SAMPLING_TIMER_BASE, INTERVAL_SAMPLING_TIMER);
+    MAP_TimerIntEnable(INTERVAL_SAMPLING_TIMER_BASE, TIMER_TIMA_TIMEOUT);
+//    MAP_TimerLoadSet(INTERVAL_SAMPLING_TIMER_BASE, INTERVAL_SAMPLING_TIMER, SysCtlClockGet() / 100000);
+//    MAP_TimerLoadSet(INTERVAL_SAMPLING_TIMER_BASE, INTERVAL_SAMPLING_TIMER, SysCtlClockGet() / 50000);
+    MAP_TimerLoadSet(INTERVAL_SAMPLING_TIMER_BASE, INTERVAL_SAMPLING_TIMER, SysCtlClockGet() / 20000);
 }
 
 void ConfigureTimers()
 {
     Configure64bitTimer();
 //    Configure32bitTimer();
-    Configure100KHzTimer();
+    ConfigureSamplerTimer();
 }
 
 //--------------------------------------------------------------------------------------------------
