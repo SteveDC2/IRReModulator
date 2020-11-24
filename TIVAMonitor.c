@@ -84,6 +84,7 @@ const unsigned char YesMessage[] = "Yes";
 const unsigned char *DisplayYesNoMessagePointer[] = {NoMessage, YesMessage};
 
 uint8_t IRState[4] = {0, 0, 0, 0};
+uint8_t IRLastState[4] = {0, 0, 0, 0};
 uint8_t IRAddress[4] = {0, 0, 0, 0};
 uint8_t IRNotAddress[4] = {0, 0, 0, 0};
 uint8_t IRData[4] = {0, 0, 0, 0};
@@ -92,9 +93,9 @@ uint8_t IRNewData = 0;
 uint16_t IRReceived[4] = {0, 0, 0, 0};
 uint64_t IRLastCounter[4] = {0, 0, 0, 0};
 uint64_t IRBitCounter[4] = {0, 0, 0, 0};
-float ScaleError[4] = {1.0, 1.0, 1.0, 1.0};
 uint64_t CurrentTimerValue;
-const uint32_t TicksPeruS = 80000000 / 1000000;
+//const uint32_t TicksPeruS = 80000000 / 1000000;
+#define TicksPeruS 80
 
 bool Stop = false;
 uint8_t Temp;
@@ -151,21 +152,35 @@ inline void UpdateAddress(uint8_t LSB, uint8_t Channel, uint8_t PosNegAddData)
     }
 }
 
-#define BIT_LEADIN_PERIOD_US_LOW  430
-#define BIT_LEADIN_PERIOD_US_HIGH 690
-#define PREAMBLE_1_PERIOD_US_LOW  7200
-#define PREAMBLE_1_PERIOD_US_HIGH 11200
-#define PREAMBLE_2_PERIOD_US_LOW  3500
-#define PREAMBLE_2_PERIOD_US_HIGH 5500
-#define BIT_ZERO_PERIOD_US_LOW    430
-#define BIT_ZERO_PERIOD_US_HIGH   690
-#define BIT_ONE_PERIOD_US_LOW     1375
-#define BIT_ONE_PERIOD_US_HIGH    2075
+//Spec = 9ms
+//Measured = 10.6
+#define PREAMBLE_1_PERIOD_US_LOW  (TicksPeruS * 7200)
+#define PREAMBLE_1_PERIOD_US_HIGH (TicksPeruS * 12200)
+//Spec = 4.5ms
+//Measured = 4.5ms
+#define PREAMBLE_2_PERIOD_US_LOW  (TicksPeruS * 3500)
+#define PREAMBLE_2_PERIOD_US_HIGH (TicksPeruS * 5500)
+//Spec = 562us
+//Measured = 652us
+#define BIT_LEADIN_PERIOD_US_LOW  (TicksPeruS * 330)
+#define BIT_LEADIN_PERIOD_US_HIGH (TicksPeruS * 890)
+//Spec = 562us
+//Measured =652us
+#define BIT_ZERO_PERIOD_US_LOW    (TicksPeruS * 330)
+#define BIT_ZERO_PERIOD_US_HIGH   (TicksPeruS * 890)
+//Spec = 1675us
+//Measured =1700us
+#define BIT_ONE_PERIOD_US_LOW     (TicksPeruS * 1175)
+#define BIT_ONE_PERIOD_US_HIGH    (TicksPeruS * 2075)
 
 
 void ProcessIRTrigger(uint8_t Channel, uint8_t State)
 {
     uint64_t Delta;
+    uint8_t ErrorFlag;
+
+    IRLastState[Channel] = IRState[Channel];
+    ErrorFlag = 0;
 
     if (IRState[Channel] == 0)
     {
@@ -180,24 +195,24 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
     {
         //We were in the 9ms pre-amble, now moving to 4.5ms pre-amble. Check the period makes sense
         Delta = CurrentTimerValue - IRLastCounter[Channel];
-        if (InRange(Delta, TicksPeruS * PREAMBLE_1_PERIOD_US_LOW, TicksPeruS * PREAMBLE_1_PERIOD_US_HIGH))
+        if (InRange(Delta, PREAMBLE_1_PERIOD_US_LOW, PREAMBLE_1_PERIOD_US_HIGH))
         {
             IRLastCounter[Channel] = CurrentTimerValue;
             IRState[Channel] ++;
-//            ScaleError[Channel] = (float)Delta / (TicksPeruS * 9 * 1000);//This should be 9 ms so scale accordingly
         }
         else
         {
             //Not a valid period so move back to idle state
             IRLastCounter[Channel] = CurrentTimerValue;
-            IRState[Channel] = 0;
+            IRState[Channel] = 8;
+            ErrorFlag = 1;
         }
     }
     else if (IRState[Channel] == 2)
     {
         //We were in the 4.5ms pre-amble, now moving to positive address phase. Check the period makes sense
         Delta = CurrentTimerValue - IRLastCounter[Channel];
-        if (InRange(Delta, ScaleError[Channel] * TicksPeruS * PREAMBLE_2_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * PREAMBLE_2_PERIOD_US_HIGH)) //~ 3.5 to 5.5ms
+        if (InRange(Delta, PREAMBLE_2_PERIOD_US_LOW, PREAMBLE_2_PERIOD_US_HIGH)) //~ 3.5 to 5.5ms
         {
             IRLastCounter[Channel] = CurrentTimerValue;
             IRBitCounter[Channel] = 0;
@@ -208,7 +223,8 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
         {
             //Not a valid period so move back to idle state
             IRLastCounter[Channel] = CurrentTimerValue;
-            IRState[Channel] = 0;
+            IRState[Channel] = 8;
+            ErrorFlag = 2;
         }
     }
     else if (IRState[Channel] == 3)
@@ -217,20 +233,21 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
         Delta = CurrentTimerValue - IRLastCounter[Channel];
         if (State != 0)//Bit marker region
         {
-            if (!InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_HIGH))
+            if (!InRange(Delta, BIT_LEADIN_PERIOD_US_LOW, BIT_LEADIN_PERIOD_US_HIGH))
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 3;
             }
         }
         else//Bit data region
         {
-            if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_HIGH))
+            if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
             {
                 //Period denotes a 0
                 UpdateAddress(0, Channel, 0);
             }
-            else if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_HIGH))
+            else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
             {
                 //Period denotes a 1
                 UpdateAddress(1, Channel, 0);
@@ -238,7 +255,8 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             else
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 4;
             }
 
         }
@@ -250,20 +268,21 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
         Delta = CurrentTimerValue - IRLastCounter[Channel];
         if (State != 0)//Bit marker region
         {
-            if (!InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_HIGH))
+            if (!InRange(Delta, BIT_LEADIN_PERIOD_US_LOW, BIT_LEADIN_PERIOD_US_HIGH))
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 5;
             }
         }
         else//Bit data region
         {
-            if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_HIGH))
+            if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
             {
                 //Period denotes a 0
                 UpdateAddress(0, Channel, 1);
             }
-            else if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_HIGH))
+            else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
             {
                 //Period denotes a 1
                 UpdateAddress(1, Channel, 1);
@@ -271,7 +290,8 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             else
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 6;
             }
 
         }
@@ -283,20 +303,21 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
         Delta = CurrentTimerValue - IRLastCounter[Channel];
         if (State != 0)//Bit marker region
         {
-            if (!InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_HIGH))
+            if (!InRange(Delta, BIT_LEADIN_PERIOD_US_LOW, BIT_LEADIN_PERIOD_US_HIGH))
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 7;
             }
         }
         else//Bit data region
         {
-            if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_HIGH))
+            if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
             {
                 //Period denotes a 0
                 UpdateAddress(0, Channel, 2);
             }
-            else if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_HIGH))
+            else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
             {
                 //Period denotes a 1
                 UpdateAddress(1, Channel, 2);
@@ -304,7 +325,8 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             else
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 8;
             }
 
         }
@@ -316,20 +338,21 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
         Delta = CurrentTimerValue - IRLastCounter[Channel];
         if (State != 0)//Bit marker region
         {
-            if (!InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_LEADIN_PERIOD_US_HIGH))
+            if (!InRange(Delta, BIT_LEADIN_PERIOD_US_LOW, BIT_LEADIN_PERIOD_US_HIGH))
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 9;
             }
         }
         else//Bit data region
         {
-            if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ZERO_PERIOD_US_HIGH))
+            if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
             {
                 //Period denotes a 0
                 UpdateAddress(0, Channel, 3);
             }
-            else if (InRange(Delta, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_LOW, ScaleError[Channel] * TicksPeruS * BIT_ONE_PERIOD_US_HIGH))
+            else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
             {
                 //Period denotes a 1
                 UpdateAddress(1, Channel, 3);
@@ -337,7 +360,8 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             else
             {
                 //Bad so go back to idle state
-                IRState[Channel] = 0;
+                IRState[Channel] = 8;
+                ErrorFlag = 10;
             }
 
         }
@@ -351,6 +375,10 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             IRReceived[Channel] = (IRAddress[Channel] << 8) | IRData[Channel];
             IRNewData = IRNewData | (1 << Channel);
         }
+        IRState[Channel] = 0;
+    }
+    if (IRState[Channel] == 8)
+    {
         IRState[Channel] = 0;
     }
 }
