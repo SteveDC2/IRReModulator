@@ -10,11 +10,16 @@ typedef struct//This structure must be multiples of 4 bytes for correct EEPROM r
 
 typedef struct
 {
-    //Align on 4 byte boudary
+    //Align on 4 byte boundary
     int8_t NLFormat;
     int8_t EchoEnable;
-    int8_t Pad1;
-    int8_t Pad2;
+    uint8_t IRAddress;
+    uint8_t Pad1;
+
+    uint8_t IRInOutMap[8];
+    uint16_t IRKeyCodes[9];
+    uint8_t Pad2;
+    uint8_t Pad3;
 
     //Electronic serial number
     uint32_t SerialNumber;

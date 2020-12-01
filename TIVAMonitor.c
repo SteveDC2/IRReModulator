@@ -83,6 +83,8 @@ const unsigned char NoMessage[] = "No";
 const unsigned char YesMessage[] = "Yes";
 const unsigned char *DisplayYesNoMessagePointer[] = {NoMessage, YesMessage};
 
+uint8_t IRColor[8] = {RED_LED, GREEN_LED, BLUE_LED, YELLOW_LED, BLUE_LED, GREEN_LED, YELLOW_LED, MAGENTA_LED};
+
 uint8_t IRState[4] = {0, 0, 0, 0};
 uint8_t IRDataPhase[4] = {0, 0, 0, 0};
 uint8_t IRAddress[4] = {0, 0, 0, 0};
@@ -94,8 +96,11 @@ uint16_t IRReceived[4] = {0, 0, 0, 0};
 uint64_t IRLastCounter[4] = {0, 0, 0, 0};
 uint64_t IRBitCounter[4] = {0, 0, 0, 0};
 uint64_t CurrentTimerValue;
+uint16_t LEDDelay = 0;
 //const uint32_t TicksPeruS = 80000000 / 1000000;
 #define TicksPeruS 80
+
+bool LearnMode = false;
 
 bool Stop = false;
 uint8_t Temp;
@@ -126,7 +131,7 @@ inline bool InRange(uint64_t Value, uint64_t Min, uint64_t Max)
         return false;
 }
 
-inline void UpdateAddress(uint8_t LSB, uint8_t Channel, uint8_t PosNegAddData)
+inline void UpdateAddressData(uint8_t LSB, uint8_t Channel, uint8_t PosNegAddData)
 {
 
     if (IRBitCounter[Channel] == 2)
@@ -162,11 +167,11 @@ inline void UpdateAddress(uint8_t LSB, uint8_t Channel, uint8_t PosNegAddData)
 #define PREAMBLE_2_PERIOD_US_LOW  (TicksPeruS * 3500)
 #define PREAMBLE_2_PERIOD_US_HIGH (TicksPeruS * 5500)
 //Spec = 562us
-//Measured = 652us
+//Measured = 652us (716 from matrix switcher!)
 #define BIT_LEADIN_PERIOD_US_LOW  (TicksPeruS * 330)
 #define BIT_LEADIN_PERIOD_US_HIGH (TicksPeruS * 890)
 //Spec = 562us
-//Measured =652us
+//Measured =652us (520 from matrix switcher)
 #define BIT_ZERO_PERIOD_US_LOW    (TicksPeruS * 330)
 #define BIT_ZERO_PERIOD_US_HIGH   (TicksPeruS * 890)
 //Spec = 1675us
@@ -217,7 +222,7 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             IRLastCounter[Channel] = CurrentTimerValue;
             IRBitCounter[Channel] = 0;
             IRDataPhase[Channel] = 0;
-            IRNewData = IRNewData & (~(1 << Channel));
+//            IRNewData = IRNewData & (~(1 << Channel));
             IRState[Channel] ++;
         }
         else
@@ -245,12 +250,12 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
             if (InRange(Delta, BIT_ZERO_PERIOD_US_LOW, BIT_ZERO_PERIOD_US_HIGH))
             {
                 //Period denotes a 0
-                UpdateAddress(0, Channel, IRDataPhase[Channel]);
+                UpdateAddressData(0, Channel, IRDataPhase[Channel]);
             }
             else if (InRange(Delta, BIT_ONE_PERIOD_US_LOW, BIT_ONE_PERIOD_US_HIGH))
             {
                 //Period denotes a 1
-                UpdateAddress(1, Channel, IRDataPhase[Channel]);
+                UpdateAddressData(1, Channel, IRDataPhase[Channel]);
             }
             else
             {
@@ -265,14 +270,14 @@ void ProcessIRTrigger(uint8_t Channel, uint8_t State)
     {
         if ((IRAddress[Channel] == (IRNotAddress[Channel] ^ 255))
          && (IRData[Channel] == (IRNotData[Channel] ^ 255))
-         && (IRAddress[Channel] == 0))
+         && ((IRAddress[Channel] == DeviceInfo.IRAddress) | LearnMode))
         {
             IRReceived[Channel] = (IRAddress[Channel] << 8) | IRData[Channel];
             IRNewData = IRNewData | (1 << Channel);
         }
-        IRState[Channel] = 0;
+        IRState[Channel] = 8;
     }
-    if (IRState[Channel] == 8)
+    if (IRState[Channel] == 8)//Used for debugging
     {
         IRState[Channel] = 0;
     }
@@ -315,24 +320,99 @@ void PortDIntHandler()
 //
 //*****************************************************************************
 
-uint8_t GetIRKey(uint8_t Channel)
-{
-    IRNewData = IRNewData & ~(1 << Channel);
-    return IRReceived[Channel] & 0xff;
-}
-
 void ReportIRKey()
 {
     uint8_t i;
     uint8_t Key;
+    uint8_t NewData;
+
+    GPIOIntDisable(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3);
+    NewData = IRNewData;
+    IRNewData = 0;
+    GPIOIntEnable(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3);
 
     for (i = 0; i < 4; i ++)
     {
-        if (IRNewData & (1 << i) != 0)
+        if (NewData & (1 << i) != 0)
         {
-            Key = GetIRKey(i);
+            Key = IRReceived[i] & 0xff;
             sprintf((char*)MiscBuffer, "%02X\n", Key);
             USBSerial_SendMessage((unsigned char *)MiscBuffer);
+        }
+    }
+}
+
+void UARTSendBlocking(unsigned char* Buffer)
+{
+    uint8_t Index = 0;
+
+    while(Buffer[Index] != 0)
+    {
+        UARTCharPut(UART1_BASE, Buffer[Index]);
+        Index++;
+    }
+}
+
+uint8_t KeyToSource(uint8_t Key)
+{
+    uint8_t Index = 0;
+    uint16_t ScanCode;
+
+    for (Index = 0; Index < 9; Index++)
+    {
+        ScanCode = DeviceInfo.IRKeyCodes[Index];
+        if ((ScanCode >> 8) == Key)
+            return DeviceInfo.IRKeyCodes[Index] & 0xff;
+    }
+    return 0;
+}
+
+void SendSetup()
+{
+    uint8_t i;
+
+    MAP_GPIOPinWrite(LED_BASE, RED_LED|BLUE_LED|GREEN_LED, WHITE_LED);
+    LEDDelay = 1000;
+
+    UARTSendBlocking((unsigned char *)"%0901.\r");//Set forced carrier mode
+    WaitFormS(50);
+    for (i = 1; i <= 8; i++)
+    {
+        sprintf((char*)MiscBuffer, "%dR%d.\r", i, i);//Reset each IR channel to the corresponding target port and not the
+        UARTSendBlocking((unsigned char *)MiscBuffer);
+        WaitFormS(50);
+    }
+}
+
+void SetMatrixSource()
+{
+    uint8_t i;
+    uint8_t NewData;
+    uint8_t TargetChannel;
+    uint8_t TargetSource;
+
+    MAP_IntDisable(INTERVAL_SAMPLING_TIMER_INT);
+    NewData = IRNewData;
+    IRNewData = 0;
+    MAP_IntEnable(INTERVAL_SAMPLING_TIMER_INT);
+
+    for (i = 0; i < 4; i ++)
+    {
+        if ((NewData & (1 << i)) != 0)
+        {
+            TargetSource = KeyToSource(IRReceived[i] & 0xff);
+            if (TargetSource == 0xff)
+            {
+                SendSetup();
+            }
+            else if (TargetSource >= 1)
+            {
+                MAP_GPIOPinWrite(LED_BASE, RED_LED|BLUE_LED|GREEN_LED, IRColor[i]);
+                LEDDelay = 65000;
+                TargetChannel = DeviceInfo.IRInOutMap[i];
+                sprintf((char*)MiscBuffer, "%dV%d.\r", TargetSource, TargetChannel);
+                UARTSendBlocking((unsigned char *)MiscBuffer);
+            }
         }
     }
 }
@@ -345,12 +425,30 @@ int main(void)
     //Initialize TIVA sub-systems
     Init_PeripheralInit();
 
+    WaitFormS(3000);//Let the RS232 transceiver charge up
+    //Make sure default IR modes are set
+    SendSetup();
 
     while (1)
     {
         ComProc_ProcessCommand();
         if (IRNewData != 0)
-            ReportIRKey();
+        {
+            //ReportIRKey();
+            SetMatrixSource();
+        }
+        if (LEDDelay != 0)
+        {
+            LEDDelay--;
+            if (LEDDelay == 0)
+                MAP_GPIOPinWrite(LED_BASE, RED_LED|BLUE_LED|GREEN_LED, 0);
+        }
+        if (MAP_GPIOPinRead(GPIO_PORTF_BASE, GPIO_PIN_4) == 0)
+        {
+            SendSetup();//This should also debounce the button
+            while((MAP_GPIOPinRead(GPIO_PORTF_BASE, GPIO_PIN_4) == 0));//Wait for button release
+            WaitFormS(100);//Debounce button release
+        }
     }
 }
 

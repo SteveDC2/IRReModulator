@@ -63,13 +63,21 @@ void GetNextCommand(void)
 //--------------------------------------------------------------------------------------------------
 int8_t ProcessHelp(void)
 {
-    USBSerial_SendMessage((unsigned char *)"Interface Help");
+    USBSerial_SendMessage((unsigned char *)"IR Matric Control Help");
     USBSerial_SendMessage((unsigned char *)"\n");
     USBSerial_SendMessage((unsigned char *)FWVersion);
     USBSerial_SendMessage((unsigned char *)"\n");
     USBSerial_SendMessage((unsigned char *)BuildDate);
     USBSerial_SendMessage((unsigned char *)"\n");
     USBSerial_SendMessage((unsigned char *)BuildTime);
+    USBSerial_SendMessage((unsigned char *)"\n\nIR Input 1 2 3 4 [5 6 7 8]\n");
+    sprintf((char *)MiscBuffer, "Output   %d %d %d %d  %d %d %d %d", DeviceInfo.IRInOutMap[0], DeviceInfo.IRInOutMap[1], DeviceInfo.IRInOutMap[2], DeviceInfo.IRInOutMap[3],
+                                                                   DeviceInfo.IRInOutMap[4], DeviceInfo.IRInOutMap[5], DeviceInfo.IRInOutMap[6], DeviceInfo.IRInOutMap[7]);
+    USBSerial_SendMessage((unsigned char *)MiscBuffer);
+    USBSerial_SendMessage((unsigned char *)"\n\n");
+    USBSerial_SendMessage((unsigned char *)"map abcdefgh where a thru h = 1-8\n");
+
+
 
     return 0;
 }
@@ -109,6 +117,84 @@ int8_t ProcessSetDisplayFormat(uint32_t Format)
     return 0;
 }
 
+uint8_t ProcessSetMap(char *Buffer)
+{
+    uint8_t Count = 0;
+    uint8_t Char;
+    uint8_t Map[8] = {1, 2, 3, 7, 0, 0, 0, 0};
+    uint8_t Error = 0;
+
+    do
+    {
+        Char = Buffer[Count];
+        if ((Char >= '1') && (Char <= '8'))
+        {
+            Map[Count] = Char - '1' + 1;
+        }
+        else if (Char != 0)
+        {
+            Error = 1;
+        }
+        Count++;
+
+    }while((Count < 8) && (Char != 0));
+
+    if (Error == 0)
+    {
+        memcpy(&DeviceInfo.IRInOutMap, &Map, sizeof(DeviceInfo.IRInOutMap));
+        EEPROM_StoreSettings();
+    }
+
+    return Error;
+}
+
+uint16_t WaitForAnyNewKeyPressed()
+{
+    uint8_t i;
+
+    while(IRNewData == 0);
+
+    for (i = 0; i < 4; i ++)
+    {
+        if ((IRNewData & (1 << i)) != 0)
+        {
+            IRNewData = 0;
+            return IRReceived[i];
+        }
+    }
+    //Should never get here but return just in case
+    return 0;
+}
+
+uint8_t ProcessLearnCommand()
+{
+    uint8_t Index;
+    uint16_t NewAddress;
+    uint16_t NewCodes[9];
+
+    LearnMode = true;
+
+    USBSerial_SendMessage((unsigned char *)"\nRemote learn mode\n");
+    USBSerial_SendMessage((unsigned char *)"\nPress any key to learn the remote address\n");
+    NewAddress = WaitForAnyNewKeyPressed() >> 8;
+    for (Index = 1; Index <= 8; Index++)
+    {
+        sprintf((char*)MiscBuffer, "Press the key for %d\n",Index);
+        USBSerial_SendMessage((unsigned char *)MiscBuffer);
+        NewCodes[Index] = ((WaitForAnyNewKeyPressed() & 0xff) << 8 ) | Index;
+    }
+    USBSerial_SendMessage((unsigned char *)"Press the key for IR reset\n");
+    NewCodes[0] = ((WaitForAnyNewKeyPressed() & 0xff) << 8 ) | 0xff;
+
+    memcpy(&DeviceInfo.IRKeyCodes, &NewCodes, sizeof(DeviceInfo.IRKeyCodes));
+    DeviceInfo.IRAddress = NewAddress;
+    EEPROM_StoreSettings();
+
+    LearnMode = false;
+
+    return 0;
+}
+
 //--------------------------------------------------------------------------------------------------
 // ComProc_ProcessCommand
 //--------------------------------------------------------------------------------------------------
@@ -131,17 +217,28 @@ void ComProc_ProcessCommand(void)
             USBSerial_SendMessage((unsigned char *)"\nUse LM Flash to download new code\n");
             TIVA_DFU();
         }
+        else if (SubCommandMatch(CommandBuffer, "MAP "))
+        {
+            Result = ProcessSetMap((char *)&CommandBuffer[sizeof("MAP")]);
+        }
+        else if (CommandMatch(CommandBuffer, "LEARN"))
+        {
+            Result = ProcessLearnCommand();
+        }
         else if (CommandMatch(CommandBuffer, "RED"))
         {
             MAP_GPIOPinWrite(LED_BASE, RED_LED|BLUE_LED|GREEN_LED, RED_LED);
+            Result = 0;
         }
         else if (CommandMatch(CommandBuffer, "GREEN"))
         {
             MAP_GPIOPinWrite(LED_BASE, RED_LED|BLUE_LED|GREEN_LED, GREEN_LED);
+            Result = 0;
         }
         else if (CommandMatch(CommandBuffer, "BLUE"))
         {
             MAP_GPIOPinWrite(LED_BASE, RED_LED|BLUE_LED|GREEN_LED, BLUE_LED);
+            Result = 0;
         }
         else if (SubCommandMatch(CommandBuffer, "SERIALNUMBER "))
         {

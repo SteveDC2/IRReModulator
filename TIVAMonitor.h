@@ -2,6 +2,7 @@
 #define __TIVAMONITOR_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "EEPROM.h"
 
 //*****************************************************************************
@@ -26,6 +27,9 @@ extern const unsigned char BuildDate[];
 extern const unsigned char BuildTime[];
 extern uint32_t SerialNumber;
 extern DeviceInfoType DeviceInfo;
+extern bool LearnMode;
+extern uint8_t IRNewData;
+extern uint16_t IRReceived[4];
 
 extern unsigned char MiscBuffer[];
 extern unsigned char SmallBuffer[];
